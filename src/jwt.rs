@@ -2,7 +2,7 @@ use std::{collections::HashSet, path::Path};
 
 use jsonwebtoken::
 {
-    decode, encode, errors::{Error, ErrorKind}, get_current_timestamp, Algorithm, DecodingKey, EncodingKey, Validation
+    decode, encode, errors::ErrorKind, Algorithm, DecodingKey, EncodingKey, Validation
 };
 use ring::signature::{Ed25519KeyPair, KeyPair};
 use serde::{Deserialize, Serialize};
@@ -14,92 +14,47 @@ pub struct JWT
     pub (crate) encoding_key: EncodingKey,
     pub (crate) decoding_key: DecodingKey,
     pub (crate) public_key: Vec<u8>,
-    pub (crate) algo: Algorithm
+    pub (crate) algo: Algorithm,
+    pub (crate) claims: Option<Claims>
 }
 
-impl JWT
+pub struct Validator<'a>
 {
-    ///create new instance with key in memory, can validate keys only created in this session
-    pub fn new_in_memory() -> Self
+    validation: Validation,
+    role: Option<String>,
+    jwt: &'a JWT,
+}
+impl<'a> Validator<'a>
+{
+    fn new(jwt: &'a JWT) -> Self
     {
-        let doc = Ed25519KeyPair::generate_pkcs8(&ring::rand::SystemRandom::new()).unwrap();
-        let encoding_key = EncodingKey::from_ed_der(doc.as_ref());
-        let pair = Ed25519KeyPair::from_pkcs8(doc.as_ref()).unwrap();
-        let public_key = pair.public_key().as_ref();
-        let decoding_key = DecodingKey::from_ed_der(pair.public_key().as_ref());
-        JWT
-        { 
-            encoding_key,
-            decoding_key,
-            public_key: public_key.to_vec(),
-            algo: Algorithm::EdDSA,
-        }
-    }
-    ///if not exixsts, create new key file pkcs8 and create new JWT instance with him
-    pub fn new_in_file<P: AsRef<Path>>(path: P) -> Self
-    {
-        if std::fs::exists(path.as_ref()).is_ok_and(|a| a == false)
+        let validation = Validation::new(jwt.algo.clone());
+        Self
         {
-            let doc = Ed25519KeyPair::generate_pkcs8(&ring::rand::SystemRandom::new()).unwrap();
-            std::fs::write(path.as_ref(), doc.as_ref()).unwrap();
+            validation,
+            role: None,
+            jwt,
         }
-        let pkcs8 = utilites::io::read_file_to_binary(path).unwrap();
-        let pair = Ed25519KeyPair::from_pkcs8(&pkcs8).unwrap();
-        let encoding_key = EncodingKey::from_ed_der(&pkcs8);
-        let public_key = pair.public_key().as_ref();
-        let decoding_key = DecodingKey::from_ed_der(pair.public_key().as_ref());
-        let jwt = JWT
-            { 
-                encoding_key,
-                decoding_key,
-                public_key: public_key.to_vec(),
-                algo: Algorithm::EdDSA,
-            };
-            jwt
     }
-    ///token lifetime in minutes
-    pub fn new_access<I: AsRef<str>, R>(&self, user_id: I, role: R, lifitime: i64) -> String
-    where R: for<'de> Deserialize<'de> + Serialize + PartialEq + Clone
+    pub fn with_subject<T: ToString>(mut self, id: T) -> Self
     {
-        let iat =  OffsetDateTime::now_utc();
-        let exp = iat + Duration::minutes(lifitime);
-        let claims = Claims { sub: user_id.as_ref().to_owned(),  exp, aud: None,  iat, role};
-        encode(&jsonwebtoken::Header::new(self.algo.clone()), &claims, &self.encoding_key).unwrap()
+        self.validation.sub = Some(id.to_string());
+        self.validation.leeway = 0;
+        self
     }
-    ///token lifetime in minutes
-    pub fn new_access_with_audience<I: AsRef<str>, R, A: ToString>(&self, user_id: I, role: R, audience: &[A], lifitime: i64) -> String
-    where R: for<'de> Deserialize<'de> + Serialize + PartialEq + Clone
+    pub fn with_audience<T: ToString>(mut self, aud: &[T]) -> Self
     {
-        let iat =  OffsetDateTime::now_utc();
-        let exp = iat + Duration::minutes(lifitime);
-        let claims = Claims { sub: user_id.as_ref().to_owned(),  exp, aud: Some(audience.iter().map(|m| m.to_string()).collect()),  iat, role};
-        encode(&jsonwebtoken::Header::new(self.algo.clone()), &claims, &self.encoding_key).unwrap()
+        self.validation.set_audience(aud);
+        self
     }
-
-    pub fn validate_access<R, I: AsRef<str>>(&self, token: I, user_id: I) -> Result<TokenData<Claims<R>>, AuthError>
-    where R: for<'de> Deserialize<'de> + Serialize + PartialEq + Clone
+    pub fn with_role<T: ToString>(mut self, role: T) -> Self
     {
-        let mut validation = Validation::new(self.algo.clone());
-        validation.aud = None;
-        validation.sub = Some(user_id.as_ref().to_owned());
-        //by default = 60 + 60 secs to key expired date
-        validation.leeway = 0;
-        self.validate(token, validation)
+        self.role = Some(role.to_string());
+        self
     }
-    pub fn validate_access_with_audience<R, I: AsRef<str>, A: ToString>(&self, token: I, user_id: I, audience: &[A]) -> Result<TokenData<Claims<R>>, AuthError>
-    where R: for<'de> Deserialize<'de> + Serialize + PartialEq + Clone
+    pub fn validate<T: AsRef<str>>(&self, token: T) -> Result<TokenData<Claims>, AuthError>
     {
-        let mut validation = Validation::new(self.algo.clone());
-        validation.sub = Some(user_id.as_ref().to_owned());
-        validation.set_audience(audience);
-        validation.leeway = 0;
-        self.validate(token, validation)
-    }
-
-    fn validate<R, I: AsRef<str>>(&self, token: I, validation: Validation) -> Result<TokenData<Claims<R>>, AuthError>
-    where R: for<'de> Deserialize<'de> + Serialize + PartialEq + Clone
-    {
-        let token_data = match decode::<Claims<R>>(token.as_ref(), &self.decoding_key, &validation) 
+        let token_data = match decode::<Claims>(token.as_ref(), &self.jwt.decoding_key, &self.validation) 
         {
             Ok(c) => Ok(c),
             Err(err) => match *err.kind() 
@@ -133,10 +88,108 @@ impl JWT
             },
         };
         let claims = token_data?;
+        if let Some(role) = self.role.as_ref()
+        {
+            if let Some(claims_role) = claims.claims.role()
+            {
+                if role != claims_role
+                {
+                    logger::error!("Role is invalid");
+                    return Err(AuthError::JWTValidateError("role не совпадает с валидируемым".to_owned()));
+                }
+            }
+        }
         Ok(claims)
     }
+}
 
-   
+impl JWT
+{
+    ///create new instance with key in memory, can validate keys only created in this session
+    pub fn new_in_memory() -> Self
+    {
+        let doc = Ed25519KeyPair::generate_pkcs8(&ring::rand::SystemRandom::new()).unwrap();
+        let encoding_key = EncodingKey::from_ed_der(doc.as_ref());
+        let pair = Ed25519KeyPair::from_pkcs8(doc.as_ref()).unwrap();
+        let public_key = pair.public_key().as_ref();
+        let decoding_key = DecodingKey::from_ed_der(pair.public_key().as_ref());
+        JWT
+        { 
+            encoding_key,
+            decoding_key,
+            public_key: public_key.to_vec(),
+            algo: Algorithm::EdDSA,
+            claims: None
+        }
+    }
+    ///if not exixsts, create new key file pkcs8 and create new JWT instance with him
+    pub fn new_in_file<P: AsRef<Path>>(path: P) -> Self
+    {
+        if std::fs::exists(path.as_ref()).is_ok_and(|a| a == false)
+        {
+            let doc = Ed25519KeyPair::generate_pkcs8(&ring::rand::SystemRandom::new()).unwrap();
+            std::fs::write(path.as_ref(), doc.as_ref()).unwrap();
+        }
+        let pkcs8 = utilites::io::read_file_to_binary(path).unwrap();
+        let pair = Ed25519KeyPair::from_pkcs8(&pkcs8).unwrap();
+        let encoding_key = EncodingKey::from_ed_der(&pkcs8);
+        let public_key = pair.public_key().as_ref();
+        let decoding_key = DecodingKey::from_ed_der(pair.public_key().as_ref());
+        let jwt = JWT
+            { 
+                encoding_key,
+                decoding_key,
+                public_key: public_key.to_vec(),
+                algo: Algorithm::EdDSA,
+                claims: None
+            };
+            jwt
+    }
+    ///by default lifetime is 5 minutes, we can update exp date in `gen_key`
+    pub fn new_access<T: ToString>(&mut self, user_id: T) -> &mut Self
+    {
+        let iat =  OffsetDateTime::now_utc();
+        let exp = iat + Duration::minutes(5);
+        let claims = Claims { sub: user_id.to_string(), exp, aud: None,  iat, role: None};
+        self.claims = Some(claims);
+        self
+    }
+    pub fn with_role<T: ToString>(&mut self, role: T) -> &mut Self
+    {
+        if let Some(claims) = self.claims.as_mut()
+        {
+            claims.role = Some(role.to_string());
+        }
+        self
+    }
+    pub fn with_audience<T: ToString>(&mut self, audience: &[T]) -> &mut Self
+    {
+        if let Some(claims) = self.claims.as_mut()
+        {
+            claims.aud = Some(audience.iter().map(|m| m.to_string()).collect());
+        }
+        self
+    }
+    pub fn gen_key(&mut self, lifetime: i64) -> String
+    {
+        if let Some(claims) = self.claims.as_mut()
+        {
+            let iat =  OffsetDateTime::now_utc();
+            let exp = iat + Duration::minutes(lifetime);
+            claims.exp = exp;
+            claims.iat = iat;
+            encode(&jsonwebtoken::Header::new(self.algo.clone()), claims, &self.encoding_key).unwrap()
+        }
+        else 
+        {
+            String::new()    
+        }
+    }
+    
+    pub fn validator(&self) -> Validator
+    {
+        Validator::new(&self)
+    }
 
     pub fn get_public_key(&self) -> String
     {
@@ -146,25 +199,25 @@ impl JWT
 
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct Claims<R>
+pub struct Claims
 {
     sub: String,
     #[serde(with = "jwt_numeric_date")]
     exp: OffsetDateTime,
     #[serde(with = "jwt_numeric_date")]
     iat: OffsetDateTime,
-    role: R,
+    role: Option<String>,
     aud: Option<HashSet<String>>
 }
-impl<R> Claims<R> where R: for<'de> Deserialize<'de> + Serialize + PartialEq
+impl Claims
 {
     pub fn user_id(&self) -> &str
     {
         &self.sub
     }
-    pub fn role(&self) -> &R
+    pub fn role(&self) -> Option<&String>
     {
-        &self.role
+        self.role.as_ref()
     }
 }
 
@@ -192,35 +245,107 @@ mod jwt_numeric_date
 #[cfg(test)]
 mod tests
 {
-    #[tokio::test]
-    async fn gen_key()
+    use std::time::Duration;
+
+    use crate::AuthError;
+
+    #[test]
+    fn test_validation_all()
     {
         let _ = logger::StructLogger::new_default();
         let mut jwt  = super::JWT::new_in_file("key.pkcs8");
         let id = "1234".to_owned();
-        let id_for_check = "4321".to_owned();
-        let role = "Operator";
+        let role = "Operator".to_string();
         let aud = ["www.ya.ru", "www.yandex.ru"];
         let aud_check = ["www.yandex.ru"];
-        let key = jwt.new_access(&id, role.to_owned(), 5);
-        logger::info!("access: {}",  key);
-        let upd = jwt.new_access(&id, role.to_owned(), 5);
-        let va = jwt.validate_access::<String, _>(&upd, &id).unwrap();
-        logger::info!(" upd_access: {} user_id: {} role: {}", &upd, va.claims.user_id(), va.claims.role());
-        let upd2 = jwt.new_access_with_audience(&id, role.to_owned(), &aud, 5);
-        let claims: jsonwebtoken::TokenData<crate::Claims<String>> = jwt.validate_access_with_audience(&upd2, &id, &aud_check).unwrap();
-        logger::info!("upd2_claims: {:?}", claims);
+        let generator = jwt.new_access(&id)
+        .with_role(&role)
+        .with_audience(&aud);
+        let key = generator.gen_key(5);
+        let valid = jwt.validator()
+        .with_audience(&aud_check)
+        .with_subject(&id)
+        .with_role(&role)
+        .validate(&key);
+        assert!(valid.is_ok());
     }
+    #[test]
+    fn test_validation_sub()
+    {
+        let _ = logger::StructLogger::new_default();
+        let mut jwt  = super::JWT::new_in_file("key.pkcs8");
+        let id = "1234".to_owned();
+        let key = jwt.new_access(&id).gen_key(5);
+        let validator = jwt.validator()
+        .with_subject(&id)
+        .validate(&key);
+        assert!(validator.is_ok());
+    }
+    #[test]
+    fn test_validation_role()
+    {
+        let _ = logger::StructLogger::new_default();
+        let mut jwt  = super::JWT::new_in_file("key.pkcs8");
+        let id = "1234".to_owned();
+        let role = "Operator".to_string();
+        let key = jwt.new_access(&id)
+        .with_role(&role)
+        .gen_key(5);
+        let validator = jwt.validator()
+        .with_subject(&id)
+        .with_role(role)
+        .validate(&key);
+        assert!(validator.is_ok());
+    }
+    #[test]
+    fn test_validation_audience()
+    {
+        let _ = logger::StructLogger::new_default();
+        let mut jwt  = super::JWT::new_in_file("key.pkcs8");
+        let id = "1234".to_owned();
+        let aud = ["www.ya.ru", "www.yandex.ru"];
+        let aud_check = ["www.yandex.ru"];
+        let key = jwt.new_access(&id)
+        .with_audience(&aud)
+        .gen_key(5);
+        let validator = jwt.validator()
+        .with_audience(&aud_check)
+        .validate(&key);
+        assert!(validator.is_ok());
+    }
+
+    #[test]
+    fn test_validation_time_exp()
+    {
+        let _ = logger::StructLogger::new_default();
+        let mut jwt  = super::JWT::new_in_file("key.pkcs8");
+        let id = "1234".to_owned();
+        let key = jwt.new_access(&id)
+        .gen_key(1);
+        let validator = jwt.validator()
+        .with_subject(&id)
+        .validate(&key);
+        assert!(validator.is_ok());
+        std::thread::sleep(Duration::from_millis(62000));
+        let validator = jwt.validator()
+        .with_subject(&id)
+        .validate(&key);
+        assert!(validator.is_err())
+    }
+
+
     #[tokio::test]
-    async fn test_generated()
+    async fn test_exp()
     {
         let token = "eyJ0eXAiOiJKV1QiLCJhbGciOiJFZERTQSJ9.eyJzdWIiOiIxMjM0IiwiZXhwIjoxNzQxNzkwNjc2LCJpYXQiOjE3NDE3OTAzNzYsInJvbGUiOiJPcGVyYXRvciIsImF1ZCI6bnVsbH0.hKIYSkAYCyIKukBlbeMF6zvRFRuHsIZiKr-0XpTJXlzLHkTqta3hkA3Yp1NIMVAvey46zoCBw0Fn5S61naq2DQ";
         let id = "1234";
         let role = "Operator";
         let _ = logger::StructLogger::new_default();
-        let mut jwt  = super::JWT::new_in_file("key.pkcs8");
-        let claims = jwt.validate_access::<String, _>(token, id);
+        let jwt  = super::JWT::new_in_file("key.pkcs8");
+        let claims = jwt.validator().with_subject(id).with_role(role).validate(token);
         logger::info!("claims: {:?}", claims);
+        let err =claims.err().unwrap();
+        assert_eq!(err.to_string(), "Ошибка валидации токена доступа `время жизни токена истекло`".to_owned());
 
         //eyJ0eXAiOiJKV1QiLCJhbGciOiJFZERTQSJ9.eyJzdWIiOiIxMjM0IiwiZXhwIjoxNzQxNzkwNjc2LCJpYXQiOjE3NDE3OTAzNzYsInJvbGUiOiJPcGVyYXRvciIsImF1ZCI6bnVsbH0.hKIYSkAYCyIKukBlbeMF6zvRFRuHsIZiKr-0XpTJXlzLHkTqta3hkA3Yp1NIMVAvey46zoCBw0Fn5S61naq2DQ
         //eyJ0eXAiOiJKV1QiLCJhbGciOiJFZERTQSJ9.eyJzdWIiOiIxMjM0IiwiZXhwIjoxNzQxNzkwNjc2LCJpYXQiOjE3NDE3OTAzNzYsInJvbGUiOiJPcGVyYXRvciIsImF1ZCI6bnVsbH0.hKIYSkAYCyIKukBlbeMF6zvRFRuHsIZiKr-0XpTJXlzLHkTqta3hkA3Yp1NIMVAvey46zoCBw0Fn5S61naq2DQ
