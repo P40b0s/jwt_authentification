@@ -1,5 +1,4 @@
 use std::{collections::HashSet, path::Path};
-
 use jsonwebtoken::
 {
     decode, encode, errors::ErrorKind, Algorithm, DecodingKey, EncodingKey, Validation
@@ -330,10 +329,8 @@ mod tests
         .validate(&key);
         assert!(validator.is_err())
     }
-
-
-    #[tokio::test]
-    async fn test_exp()
+    #[test]
+    fn test_exp()
     {
         let token = "eyJ0eXAiOiJKV1QiLCJhbGciOiJFZERTQSJ9.eyJzdWIiOiIxMjM0IiwiZXhwIjoxNzQxNzkwNjc2LCJpYXQiOjE3NDE3OTAzNzYsInJvbGUiOiJPcGVyYXRvciIsImF1ZCI6bnVsbH0.hKIYSkAYCyIKukBlbeMF6zvRFRuHsIZiKr-0XpTJXlzLHkTqta3hkA3Yp1NIMVAvey46zoCBw0Fn5S61naq2DQ";
         let id = "1234";
