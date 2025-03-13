@@ -7,7 +7,7 @@ use jsonwebtoken::
 use ring::signature::{Ed25519KeyPair, KeyPair};
 use serde::{Deserialize, Serialize};
 use time::{Duration, OffsetDateTime};
-use crate::error::AuthError;
+use crate::error::JwtError;
 pub use jsonwebtoken::TokenData;
 pub struct JWT
 {
@@ -21,7 +21,7 @@ pub struct JWT
 pub struct Validator<'a>
 {
     validation: Validation,
-    role: Option<String>,
+    role: Option<&'a str>,
     jwt: &'a JWT,
 }
 impl<'a> Validator<'a>
@@ -47,12 +47,12 @@ impl<'a> Validator<'a>
         self.validation.set_audience(aud);
         self
     }
-    pub fn with_role<T: ToString>(mut self, role: T) -> Self
+    pub fn with_role(mut self, role: &'a str) -> Self
     {
-        self.role = Some(role.to_string());
+        self.role = Some(role);
         self
     }
-    pub fn validate<T: AsRef<str>>(&self, token: T) -> Result<TokenData<Claims>, AuthError>
+    pub fn validate<T: AsRef<str>>(&self, token: T) -> Result<TokenData<Claims>, JwtError>
     {
         let token_data = match decode::<Claims>(token.as_ref(), &self.jwt.decoding_key, &self.validation) 
         {
@@ -61,41 +61,41 @@ impl<'a> Validator<'a>
             {
                 ErrorKind::InvalidToken => 
                 {
-                    logger::error!("Текущий токен не валиден");
-                    Err(AuthError::JWTValidateError("Текущий токен не валиден".to_owned()))
+                    logger::error!("Token is invalid");
+                    Err(JwtError::JWTValidateError("Token is invalid".to_owned()))
                 },
                 ErrorKind::InvalidIssuer =>  
                 {
                     logger::error!("Issuer is invalid");
-                    Err(AuthError::JWTValidateError("iss не совпадает с валидируемым".to_owned()))
+                    Err(JwtError::JWTValidateError("Issuer is invalid".to_owned()))
                 },
                 ErrorKind::InvalidSubject =>
                 {
                     logger::error!("Subject is invalid");
-                    Err(AuthError::JWTValidateError("sub не совпадает с валидируемым".to_owned()))
+                    Err(JwtError::JWTValidateError("Subject is invalid".to_owned()))
                 },
                 ErrorKind::InvalidAudience =>
                 {
                     logger::error!("Audience is invalid");
-                    Err(AuthError::JWTValidateError("audience не совпадает с валидируемым".to_owned()))
+                    Err(JwtError::JWTValidateError("Audience is invalid".to_owned()))
                 },
                 ErrorKind::ExpiredSignature => 
                 {
                     logger::error!("Token is expired");
-                    Err(AuthError::JWTValidateError("время жизни токена истекло".to_owned()))
+                    Err(JwtError::JWTValidateError("Token is expired".to_owned()))
                 }
-                _ => Err(AuthError::JWTError(err))
+                _ => Err(JwtError::JWTError(err))
             },
         };
         let claims = token_data?;
-        if let Some(role) = self.role.as_ref()
+        if let Some(role) = self.role
         {
             if let Some(claims_role) = claims.claims.role()
             {
                 if role != claims_role
                 {
                     logger::error!("Role is invalid");
-                    return Err(AuthError::JWTValidateError("role не совпадает с валидируемым".to_owned()));
+                    return Err(JwtError::JWTValidateError("role is invalid".to_owned()));
                 }
             }
         }
@@ -247,8 +247,6 @@ mod tests
 {
     use std::time::Duration;
 
-    use crate::AuthError;
-
     #[test]
     fn test_validation_all()
     {
@@ -265,7 +263,7 @@ mod tests
         let valid = jwt.validator()
         .with_audience(&aud_check)
         .with_subject(&id)
-        .with_role(&role)
+        .with_role(role.as_str())
         .validate(&key);
         assert!(valid.is_ok());
     }
@@ -293,7 +291,7 @@ mod tests
         .gen_key(5);
         let validator = jwt.validator()
         .with_subject(&id)
-        .with_role(role)
+        .with_role(role.as_str())
         .validate(&key);
         assert!(validator.is_ok());
     }
@@ -345,7 +343,7 @@ mod tests
         let claims = jwt.validator().with_subject(id).with_role(role).validate(token);
         logger::info!("claims: {:?}", claims);
         let err =claims.err().unwrap();
-        assert_eq!(err.to_string(), "Ошибка валидации токена доступа `время жизни токена истекло`".to_owned());
+        assert_eq!(err.to_string(), "Ошибка валидации токена доступа `Token is expired`".to_owned());
 
         //eyJ0eXAiOiJKV1QiLCJhbGciOiJFZERTQSJ9.eyJzdWIiOiIxMjM0IiwiZXhwIjoxNzQxNzkwNjc2LCJpYXQiOjE3NDE3OTAzNzYsInJvbGUiOiJPcGVyYXRvciIsImF1ZCI6bnVsbH0.hKIYSkAYCyIKukBlbeMF6zvRFRuHsIZiKr-0XpTJXlzLHkTqta3hkA3Yp1NIMVAvey46zoCBw0Fn5S61naq2DQ
         //eyJ0eXAiOiJKV1QiLCJhbGciOiJFZERTQSJ9.eyJzdWIiOiIxMjM0IiwiZXhwIjoxNzQxNzkwNjc2LCJpYXQiOjE3NDE3OTAzNzYsInJvbGUiOiJPcGVyYXRvciIsImF1ZCI6bnVsbH0.hKIYSkAYCyIKukBlbeMF6zvRFRuHsIZiKr-0XpTJXlzLHkTqta3hkA3Yp1NIMVAvey46zoCBw0Fn5S61naq2DQ
