@@ -20,7 +20,7 @@ pub struct JWT
 pub struct Validator<'a>
 {
     validation: Validation,
-    role: Option<&'a str>,
+    roles: Option<&'a[&'a str]>,
     jwt: &'a JWT,
 }
 impl<'a> Validator<'a>
@@ -31,7 +31,7 @@ impl<'a> Validator<'a>
         Self
         {
             validation,
-            role: None,
+            roles: None,
             jwt,
         }
     }
@@ -43,12 +43,18 @@ impl<'a> Validator<'a>
     }
     pub fn with_audience<T: ToString>(mut self, aud: &[T]) -> Self
     {
-        self.validation.set_audience(aud);
+        if !aud.is_empty()
+        {
+            self.validation.set_audience(aud);
+        }
         self
     }
-    pub fn with_role(mut self, role: &'a str) -> Self
+    pub fn with_roles(mut self, roles: &'a [&'a str]) -> Self
     {
-        self.role = Some(role);
+        if !roles.is_empty()
+        {
+            self.roles = Some(roles);
+        }
         self
     }
     pub fn validate<T: AsRef<str>>(&self, token: T) -> Result<TokenData<Claims>, JwtError>
@@ -87,11 +93,11 @@ impl<'a> Validator<'a>
             },
         };
         let claims = token_data?;
-        if let Some(role) = self.role
+        if let Some(roles) = self.roles
         {
             if let Some(claims_role) = claims.claims.role()
             {
-                if role != claims_role
+                if !roles.contains(&claims_role.as_str())
                 {
                     logger::error!("Role is invalid");
                     return Err(JwtError::JWTValidateError("role is invalid".to_owned()));
@@ -163,9 +169,12 @@ impl JWT
     }
     pub fn with_audience<T: ToString>(&mut self, audience: &[T]) -> &mut Self
     {
-        if let Some(claims) = self.claims.as_mut()
+        if !audience.is_empty()
         {
-            claims.aud = Some(audience.iter().map(|m| m.to_string()).collect());
+            if let Some(claims) = self.claims.as_mut()
+            {
+                claims.aud = Some(audience.iter().map(|m| m.to_string()).collect());
+            }
         }
         self
     }
@@ -262,7 +271,7 @@ mod tests
         let valid = jwt.validator()
         .with_audience(&aud_check)
         .with_subject(&id)
-        .with_role(role.as_str())
+        .with_roles(&[role.as_str()])
         .validate(&key);
         assert!(valid.is_ok());
     }
@@ -290,7 +299,7 @@ mod tests
         .gen_key(5);
         let validator = jwt.validator()
         .with_subject(&id)
-        .with_role(role.as_str())
+        .with_roles(&[role.as_str()])
         .validate(&key);
         assert!(validator.is_ok());
     }
@@ -337,7 +346,7 @@ mod tests
         let role = "Operator";
         let _ = logger::StructLogger::new_default();
         let jwt  = super::JWT::new_in_file("key.pkcs8");
-        let claims = jwt.validator().with_subject(id).with_role(role).validate(token);
+        let claims = jwt.validator().with_subject(id).with_roles(&[role]).validate(token);
         logger::info!("claims: {:?}", claims);
         let err =claims.err().unwrap();
         assert_eq!(err.to_string(), "Ошибка валидации токена доступа `Token is expired`".to_owned());
