@@ -82,7 +82,12 @@ impl<'a> Validator<'a>
                 {
                     logger::error!("Token is expired");
                     Err(JwtError::JWTValidateError("Token is expired".to_owned()))
-                }
+                },
+                ErrorKind::InvalidSignature =>
+                {
+                    logger::error!("Token have invalid signature");
+                    Err(JwtError::JWTValidateError("Token have invalid signature".to_owned()))
+                },
                 _ => Err(JwtError::JWTError(err))
             },
         };
