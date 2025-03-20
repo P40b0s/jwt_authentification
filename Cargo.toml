@@ -8,7 +8,8 @@ serde = "1.0.219"
 jsonwebtoken = {version = "9.3.1"}
 logger = {git = "https://github.com/P40b0s/logger.git", branch = "main"}
 utilites = {git = "https://github.com/P40b0s/help_utilites.git", package = "utilites", features = ["dates"]}
-uuid = {version = "1.16.0", features = ["v7"], optional = true}
+uuid = {version = "1.16.0", features = ["v7"]}
 thiserror="2.0.12"
 time="0.3.40"
 ring="0.17.14"
+cookie = {version = "0.18.1", features = ["private", "signed"]}
