@@ -1,6 +1,6 @@
 use std::path::Path;
 use cookie::Key;
-pub use cookie::{Cookie, CookieJar};
+pub use cookie::{Cookie, CookieJar, time::Duration};
 use ring::signature::Ed25519KeyPair;
 
 pub struct CookieService
