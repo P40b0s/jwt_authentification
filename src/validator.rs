@@ -33,7 +33,7 @@ impl<'a> Validator<'a>
         }
         else
         {
-            self.validation.set_required_spec_claims(&["exp", "nbf", "iss", "sub"]);
+            self.validation.set_required_spec_claims(&["exp", "sub"]);
         }
         self
     }
