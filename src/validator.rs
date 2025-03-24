@@ -31,6 +31,10 @@ impl<'a> Validator<'a>
         {
             self.validation.set_audience(aud);
         }
+        else
+        {
+            self.validation.set_required_spec_claims(&["exp", "nbf", "iss", "sub"]);
+        }
         self
     }
     pub fn with_roles(mut self, roles: &'a [&'a str]) -> Self
