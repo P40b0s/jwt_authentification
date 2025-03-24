@@ -33,6 +33,7 @@ impl<'a> Validator<'a>
         }
         else
         {
+            self.validation.validate_aud = false;
             self.validation.set_required_spec_claims(&["exp", "sub"]);
         }
         self
