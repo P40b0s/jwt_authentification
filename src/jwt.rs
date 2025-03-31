@@ -4,10 +4,9 @@ use jsonwebtoken::
     encode, Algorithm, DecodingKey, EncodingKey
 };
 use ring::signature::{Ed25519KeyPair, KeyPair};
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use time::{Duration, OffsetDateTime};
 pub use jsonwebtoken::TokenData;
-
 use crate::validator::Validator;
 pub struct JWT
 {
@@ -67,15 +66,16 @@ impl JWT
     {
         let iat =  OffsetDateTime::now_utc();
         let exp = iat + Duration::minutes(5);
-        let claims = Claims { sub: user_id.to_string(), exp, aud: None,  iat, role: None};
+        let claims = Claims { sub: user_id.to_string(), exp, aud: None,  iat, payload: None};
         self.claims = Some(claims);
         self
     }
-    pub fn with_role<T: ToString>(&mut self, role: T) -> &mut Self
+    //TODO сделать независимым от очереди применения методов
+    pub fn with_payload<T: Serialize>(&mut self, payload: &T) -> &mut Self
     {
         if let Some(claims) = self.claims.as_mut()
         {
-            claims.role = Some(role.to_string());
+            claims.payload = Some(serde_json::to_string(payload).unwrap());
         }
         self
     }
@@ -118,7 +118,7 @@ impl JWT
 }
 
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Claims
 {
     sub: String,
@@ -126,20 +126,47 @@ pub struct Claims
     exp: OffsetDateTime,
     #[serde(with = "jwt_numeric_date")]
     iat: OffsetDateTime,
-    role: Option<String>,
+    payload: Option<String>,
     aud: Option<HashSet<String>>
 }
+
+
+// impl Claims
+// {
+//     pub fn user_id(&self) -> &str
+//     {
+//         &self.sub
+//     }
+//     pub fn role(&self) -> Option<&String>
+//     {
+//         self.role.as_ref()
+//     }
+// }
+
+// #[derive(Debug, Serialize, Deserialize)]
+// pub struct ClaimsPayload
+// {
+//     sub: String,
+//     #[serde(with = "jwt_numeric_date")]
+//     exp: OffsetDateTime,
+//     #[serde(with = "jwt_numeric_date")]
+//     iat: OffsetDateTime,
+//     role: Option<String>,
+//     aud: Option<HashSet<String>>
+// }
 impl Claims
 {
     pub fn user_id(&self) -> &str
     {
         &self.sub
     }
-    pub fn role(&self) -> Option<&String>
+    pub fn payload<D>(&self) -> Option<D>
+    where D: for<'de> Deserialize<'de>
     {
-        self.role.as_ref()
+        self.payload.as_ref().and_then(|pl| serde_json::from_str(pl).ok())
     }
 }
+
 
 mod jwt_numeric_date 
 {
@@ -167,9 +194,17 @@ mod tests
 {
     use std::time::Duration;
 
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Serialize, Deserialize)]
+    pub struct Payload
+    {
+        role: String
+    }
     #[test]
     fn test_validation_all()
     {
+        let payload = Payload { role: "operator".to_owned()};
         let _ = logger::StructLogger::new_default();
         let mut jwt  = super::JWT::new_in_file("key.pkcs8");
         let id = "1234".to_owned();
@@ -177,13 +212,12 @@ mod tests
         let aud = ["www.ya.ru", "www.yandex.ru"];
         let aud_check = ["www.yandex.ru"];
         let generator = jwt.new_access(&id)
-        .with_role(&role)
+        .with_payload(&payload)
         .with_audience(&aud);
         let key = generator.gen_key(5);
         let valid = jwt.validator()
         .with_audience(&aud_check)
         .with_subject(&id)
-        .with_roles(&[role.as_str()])
         .validate(&key);
         assert!(valid.is_ok());
     }
@@ -191,27 +225,28 @@ mod tests
     fn test_validation_sub()
     {
         let _ = logger::StructLogger::new_default();
+        let payload = Payload { role: "operator".to_owned()};
         let mut jwt  = super::JWT::new_in_file("key.pkcs8");
         let id = "1234".to_owned();
-        let key = jwt.new_access(&id).gen_key(5);
+        let key = jwt.new_access(&id).with_payload(&payload).gen_key(5);
         let validator = jwt.validator()
         .with_subject(&id)
         .validate(&key);
         assert!(validator.is_ok());
+        println!("{}", validator.unwrap().claims.payload::<Payload>().unwrap().role);
     }
     #[test]
     fn test_validation_role()
     {
+        let payload = Payload { role: "operator".to_owned()};
         let _ = logger::StructLogger::new_default();
         let mut jwt  = super::JWT::new_in_file("key.pkcs8");
         let id = "1234".to_owned();
-        let role = "Operator".to_string();
         let key = jwt.new_access(&id)
-        .with_role(&role)
+        .with_payload(&payload)
         .gen_key(5);
         let validator = jwt.validator()
         .with_subject(&id)
-        .with_roles(&[role.as_str()])
         .validate(&key);
         assert!(validator.is_ok());
     }
@@ -258,7 +293,7 @@ mod tests
         let role = "Operator";
         let _ = logger::StructLogger::new_default();
         let jwt  = super::JWT::new_in_file("key.pkcs8");
-        let claims = jwt.validator().with_subject(id).with_roles(&[role]).validate(token);
+        let claims = jwt.validator().with_subject(id).validate(token);
         logger::info!("claims: {:?}", claims);
         let err =claims.err().unwrap();
         assert_eq!(err.to_string(), "Ошибка валидации токена доступа `Token is expired`".to_owned());

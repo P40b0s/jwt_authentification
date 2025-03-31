@@ -4,7 +4,6 @@ use crate::{error::JwtError, Claims, JWT};
 pub struct Validator<'a>
 {
     validation: Validation,
-    roles: Option<&'a[&'a str]>,
     jwt: &'a JWT,
 }
 impl<'a> Validator<'a>
@@ -15,7 +14,6 @@ impl<'a> Validator<'a>
         Self
         {
             validation,
-            roles: None,
             jwt,
         }
     }
@@ -35,14 +33,6 @@ impl<'a> Validator<'a>
         {
             self.validation.validate_aud = false;
             self.validation.set_required_spec_claims(&["exp", "sub"]);
-        }
-        self
-    }
-    pub fn with_roles(mut self, roles: &'a [&'a str]) -> Self
-    {
-        if !roles.is_empty()
-        {
-            self.roles = Some(roles);
         }
         self
     }
@@ -87,17 +77,6 @@ impl<'a> Validator<'a>
             },
         };
         let claims = token_data?;
-        if let Some(roles) = self.roles
-        {
-            if let Some(claims_role) = claims.claims.role()
-            {
-                if !roles.contains(&claims_role.as_str())
-                {
-                    logger::error!("Role is invalid");
-                    return Err(JwtError::JWTValidateError("role is invalid".to_owned()));
-                }
-            }
-        }
         Ok(claims)
     }
 }

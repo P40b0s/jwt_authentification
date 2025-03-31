@@ -986,6 +986,7 @@ dependencies = [
  "logger",
  "ring",
  "serde",
+ "serde_json",
  "thiserror",
  "time",
  "utilites",
